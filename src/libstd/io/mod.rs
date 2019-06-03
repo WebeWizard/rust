@@ -1472,27 +1472,24 @@ fn read_until<R: BufRead + ?Sized>(r: &mut R, delim: u8, buf: &mut Vec<u8>)
                                    -> Result<usize> {
     let mut read = 0;
     loop {
-        let (done, used) = {
-            let available = match r.fill_buf() {
-                Ok(n) => n,
-                Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
-                Err(e) => return Err(e)
-            };
-            match memchr::memchr(delim, available) {
-                Some(i) => {
-                    buf.extend_from_slice(&available[..=i]);
-                    (true, i + 1)
-                }
-                None => {
-                    buf.extend_from_slice(available);
-                    (false, available.len())
-                }
-            }
+        let available = match r.fill_buf() {
+            Ok(n) => n,
+            Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e)
         };
-        r.consume(used);
-        read += used;
-        if done || used == 0 {
-            return Ok(read);
+        if available.len() == 0 { return Ok(read); }
+        match memchr::memchr(delim, available) {
+            None => {
+                buf.extend_from_slice(available);
+                let used = available.len();
+                r.consume(used);
+                read += used;
+            }
+            Some(i) => {
+                buf.extend_from_slice(&available[..=i]);
+                r.consume(i+1);
+                return Ok(read+i+1);
+            }
         }
     }
 }
@@ -2260,6 +2257,7 @@ impl<B: BufRead> Iterator for Lines<B> {
 mod tests {
     use crate::io::prelude::*;
     use crate::io;
+    use crate::io::BufReader;
     use super::{Cursor, SeekFrom, repeat};
 
     #[test]
@@ -2280,6 +2278,17 @@ mod tests {
         v.truncate(0);
         assert_eq!(buf.read_until(b'3', &mut v).unwrap(), 0);
         assert_eq!(v, []);
+    }
+
+    #[bench]
+    fn bench_read_until(b: &mut test::Bencher) {
+        b.iter(|| {
+            let mut single_line = [b'1'; 1000000].to_vec();
+            single_line[999999] = b'\n';
+            let mut buf_single = BufReader::new(single_line.as_slice());
+            let mut v = Vec::new();
+            buf_single.read_until(b'\n', &mut v).unwrap();
+        });
     }
 
     #[test]
