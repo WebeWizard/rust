@@ -1471,24 +1471,28 @@ pub enum SeekFrom {
 fn read_until<R: BufRead + ?Sized>(r: &mut R, delim: u8, buf: &mut Vec<u8>)
                                    -> Result<usize> {
     let mut read = 0;
+    let mut used;
     loop {
         let available = match r.fill_buf() {
             Ok(n) => n,
             Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
             Err(e) => return Err(e)
         };
-        if available.len() == 0 { return Ok(read); }
+        used = available.len();
         match memchr::memchr(delim, available) {
-            None => {
-                buf.extend_from_slice(available);
-                let used = available.len();
+            Some(i) => {
+                used = i+1;
+                buf.extend_from_slice(&available[..=i]);
+                r.consume(used);
+                return Ok(read+used);
+            }
+            _ => {
+                if used == 0 { return Ok(read); }
+                else {
+                  buf.extend_from_slice(available);
                 r.consume(used);
                 read += used;
-            }
-            Some(i) => {
-                buf.extend_from_slice(&available[..=i]);
-                r.consume(i+1);
-                return Ok(read+i+1);
+                }
             }
         }
     }
@@ -2282,12 +2286,11 @@ mod tests {
 
     #[bench]
     fn bench_read_until(b: &mut test::Bencher) {
+        let mut single_line = [b'1'; 1000000].to_vec();
+        single_line[999999] = b'\n';
         b.iter(|| {
-            let mut single_line = [b'1'; 1000000].to_vec();
-            single_line[999999] = b'\n';
             let mut buf_single = BufReader::new(single_line.as_slice());
-            let mut v = Vec::new();
-            buf_single.read_until(b'\n', &mut v).unwrap();
+            buf_single.lines().for_each(|_val| ());
         });
     }
 
